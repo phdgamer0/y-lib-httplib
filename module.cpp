@@ -1,3 +1,14 @@
+#ifdef _WIN32
+#define IN
+#define CONST const
+#endif
+#define CPPHTTPLIB_OPENSSL_SUPPORT
+#include "httplib.h"
+#ifdef _WIN32
+#undef IN
+#undef CONST
+#undef DELETE
+#endif
 #include "ylang/vm.hpp"
 #include <iostream>
 
@@ -104,7 +115,10 @@ extern "C" void YlangLoadModule(std::shared_ptr<Env> env, const std::vector<std:
 		static auto httpServerClass = std::make_shared<ClassObject>("HttpServerObj");
 		static auto httpsServerClass = std::make_shared<ClassObject>("HttpsServerObj");
 
-		auto bindRouteMethod = [this, env](httplib::Server* svr, const string &method, const string &path, Value lambda, int l, int c) {
+		// route handlers run y-- lambdas and need method resolution; a library has no host Interpreter, so keep one bound to the caller's env
+		auto interp = std::make_shared<Interpreter>();
+		interp->env = env;
+		auto bindRouteMethod = [interp, env](httplib::Server* svr, const string &method, const string &path, Value lambda, int l, int c) {
 			auto handler = [=](const httplib::Request &req, httplib::Response &res) {
 				Chunk tempChunk;
 				int lambdaIdx = tempChunk.addConstant(lambda);
@@ -118,7 +132,7 @@ extern "C" void YlangLoadModule(std::shared_ptr<Env> env, const std::vector<std:
 				tempChunk.write(OpCode::OP_RETURN, l, c);
 				VM tempVM;
 				tempVM.globals = env;
-				tempVM.methodResolver = [&](MethodCallExpr *m) { return this->Resolve_methods(m); };
+				tempVM.methodResolver = [interp](MethodCallExpr *m) { return interp->Resolve_methods(m); };
 				try {
 					tempVM.run(tempChunk);
 					Value ret = tempVM.stack.empty() ? Value::None() : tempVM.stack.back();
@@ -205,10 +219,9 @@ extern "C" void YlangLoadModule(std::shared_ptr<Env> env, const std::vector<std:
 		modVal.type = ValueType::CLASS;
 		modVal.ref = moduleNamespace;
 		env->set("Http", modVal, false, false);
-	}
-}
 
     // Socket Module
+    {
     auto moduleNamespace = std::make_shared<ClassObject>("Socket");
 		moduleNamespace->mro.push_back(moduleNamespace.get());
 
@@ -458,3 +471,4 @@ extern "C" void YlangLoadModule(std::shared_ptr<Env> env, const std::vector<std:
 		modVal.ref = moduleNamespace;
 		env->set("Socket", modVal, false, false);
 	}
+}
